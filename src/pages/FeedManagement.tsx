@@ -1,52 +1,87 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
-import { Plus, Search, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-
-const mockFeedData = [
-  { id: 1, name: "Layer Mash Premium", vehicle: "MH-12-AB-1234", date: "2024-01-15", quantity: 500, cost: 25000 },
-  { id: 2, name: "Grower Feed", vehicle: "MH-12-CD-5678", date: "2024-01-20", quantity: 300, cost: 13500 },
-  { id: 3, name: "Layer Mash Standard", vehicle: "MH-12-AB-1234", date: "2024-02-05", quantity: 450, cost: 22000 },
-  { id: 4, name: "Starter Feed", vehicle: "MH-12-EF-9012", date: "2024-02-12", quantity: 200, cost: 11000 },
-];
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 const FeedManagement = () => {
-  const [feedData, setFeedData] = useState(mockFeedData);
+  const { user } = useAuth();
+  const [feedData, setFeedData] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    fetchFeedData();
+  }, [user]);
+
+  const fetchFeedData = async () => {
+    if (!user) return;
+    
+    const { data, error } = await supabase
+      .from("feed_purchases")
+      .select("*")
+      .order("purchase_date", { ascending: false });
+
+    if (error) {
+      toast.error("Failed to load feed data");
+      console.error(error);
+    } else {
+      setFeedData(data || []);
+    }
+    setLoading(false);
+  };
 
   const filteredData = feedData.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    item.vehicle.toLowerCase().includes(searchTerm.toLowerCase())
+    item.feed_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.vehicle_number.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddFeed = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddFeed = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     
-    const newFeed = {
-      id: feedData.length + 1,
-      name: formData.get("name") as string,
-      vehicle: formData.get("vehicle") as string,
-      date: formData.get("date") as string,
-      quantity: Number(formData.get("quantity")),
-      cost: Number(formData.get("cost")),
-    };
+    const { error } = await supabase
+      .from("feed_purchases")
+      .insert([{
+        user_id: user?.id,
+        feed_name: formData.get("name") as string,
+        vehicle_number: formData.get("vehicle") as string,
+        purchase_date: formData.get("date") as string,
+        quantity: Number(formData.get("quantity")),
+        total_cost: Number(formData.get("cost")),
+      }]);
 
-    setFeedData([...feedData, newFeed]);
-    setIsDialogOpen(false);
-    toast.success("Feed record added successfully!");
-    e.currentTarget.reset();
+    if (error) {
+      toast.error("Failed to add feed record");
+      console.error(error);
+    } else {
+      toast.success("Feed record added successfully!");
+      setIsDialogOpen(false);
+      e.currentTarget.reset();
+      fetchFeedData();
+    }
   };
 
-  const handleDelete = (id: number) => {
-    setFeedData(feedData.filter(item => item.id !== id));
-    toast.success("Feed record deleted successfully!");
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase
+      .from("feed_purchases")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      toast.error("Failed to delete feed record");
+      console.error(error);
+    } else {
+      toast.success("Feed record deleted successfully!");
+      fetchFeedData();
+    }
   };
 
   return (
@@ -122,18 +157,23 @@ const FeedManagement = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredData.map((item) => (
-                <TableRow key={item.id}>
-                  <TableCell className="font-medium">{item.name}</TableCell>
-                  <TableCell>{item.vehicle}</TableCell>
-                  <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
-                  <TableCell className="text-right">{item.quantity}</TableCell>
-                  <TableCell className="text-right">₹{item.cost.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button variant="ghost" size="icon">
-                        <Pencil className="h-4 w-4" />
-                      </Button>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
+                </TableRow>
+              ) : filteredData.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center">No feed purchases found</TableCell>
+                </TableRow>
+              ) : (
+                filteredData.map((item) => (
+                  <TableRow key={item.id}>
+                    <TableCell className="font-medium">{item.feed_name}</TableCell>
+                    <TableCell>{item.vehicle_number}</TableCell>
+                    <TableCell>{new Date(item.purchase_date).toLocaleDateString()}</TableCell>
+                    <TableCell className="text-right">{item.quantity}</TableCell>
+                    <TableCell className="text-right">₹{item.total_cost.toLocaleString()}</TableCell>
+                    <TableCell className="text-right">
                       <Button 
                         variant="ghost" 
                         size="icon"
@@ -141,10 +181,10 @@ const FeedManagement = () => {
                       >
                         <Trash2 className="h-4 w-4" />
                       </Button>
-                    </div>
-                  </TableCell>
-                </TableRow>
-              ))}
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>

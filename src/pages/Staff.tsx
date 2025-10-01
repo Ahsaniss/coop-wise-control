@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -6,72 +6,150 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Badge } from "@/components/ui/badge";
-import { Plus, Search, DollarSign, Pencil, Trash2 } from "lucide-react";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
+import { Plus, Search, DollarSign, Trash2 } from "lucide-react";
 import { toast } from "sonner";
-
-const mockStaffData = [
-  { id: 1, name: "Rajesh Kumar", role: "Supervisor", phone: "9876543210", totalPaid: 45000, pending: 0 },
-  { id: 2, name: "Amit Sharma", role: "Feeder", phone: "9876543211", totalPaid: 28000, pending: 5000 },
-  { id: 3, name: "Priya Singh", role: "Cleaner", phone: "9876543212", totalPaid: 22000, pending: 0 },
-  { id: 4, name: "Suresh Patel", role: "Feeder", phone: "9876543213", totalPaid: 30000, pending: 3000 },
-];
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 const Staff = () => {
-  const [staff, setStaff] = useState(mockStaffData);
+  const { user } = useAuth();
+  const [staff, setStaff] = useState<any[]>([]);
+  const [payments, setPayments] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [isAddDialogOpen, setIsAddDialogOpen] = useState(false);
   const [isPaymentDialogOpen, setIsPaymentDialogOpen] = useState(false);
-  const [selectedStaff, setSelectedStaff] = useState<typeof mockStaffData[0] | null>(null);
+  const [selectedStaff, setSelectedStaff] = useState<any | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [paymentStatus, setPaymentStatus] = useState("paid");
+
+  useEffect(() => {
+    fetchStaff();
+    fetchPayments();
+  }, [user]);
+
+  const fetchStaff = async () => {
+    if (!user) return;
+    
+    const { data, error } = await supabase
+      .from("staff")
+      .select("*")
+      .order("full_name");
+
+    if (error) {
+      toast.error("Failed to load staff");
+      console.error(error);
+    } else {
+      setStaff(data || []);
+    }
+    setLoading(false);
+  };
+
+  const fetchPayments = async () => {
+    if (!user) return;
+    
+    const { data, error } = await supabase
+      .from("staff_payments")
+      .select("*");
+
+    if (error) {
+      console.error("Failed to load payments:", error);
+    } else {
+      setPayments(data || []);
+    }
+  };
+
+  const getStaffPayments = (staffId: string) => {
+    return payments.filter(p => p.staff_id === staffId);
+  };
+
+  const getTotalPaid = (staffId: string) => {
+    return getStaffPayments(staffId)
+      .filter(p => p.status === 'paid')
+      .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+  };
+
+  const getPending = (staffId: string) => {
+    return getStaffPayments(staffId)
+      .filter(p => p.status === 'pending')
+      .reduce((sum, p) => sum + parseFloat(p.amount), 0);
+  };
 
   const filteredData = staff.filter(item =>
-    item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    item.full_name.toLowerCase().includes(searchTerm.toLowerCase()) ||
     item.role.toLowerCase().includes(searchTerm.toLowerCase())
   );
 
-  const handleAddStaff = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddStaff = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     
-    const newStaff = {
-      id: staff.length + 1,
-      name: formData.get("name") as string,
-      role: formData.get("role") as string,
-      phone: formData.get("phone") as string,
-      totalPaid: 0,
-      pending: 0,
-    };
+    const { error } = await supabase
+      .from("staff")
+      .insert([{
+        user_id: user?.id,
+        full_name: formData.get("name") as string,
+        role: formData.get("role") as string,
+        contact_phone: formData.get("phone") as string,
+        contact_email: formData.get("email") as string || null,
+      }]);
 
-    setStaff([...staff, newStaff]);
-    setIsAddDialogOpen(false);
-    toast.success("Staff member added successfully!");
-    e.currentTarget.reset();
+    if (error) {
+      toast.error("Failed to add staff member");
+      console.error(error);
+    } else {
+      toast.success("Staff member added successfully!");
+      setIsAddDialogOpen(false);
+      e.currentTarget.reset();
+      fetchStaff();
+    }
   };
 
-  const handleAddPayment = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddPayment = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     if (!selectedStaff) return;
 
     const formData = new FormData(e.currentTarget);
-    const amount = Number(formData.get("amount"));
+    
+    const { error } = await supabase
+      .from("staff_payments")
+      .insert([{
+        user_id: user?.id,
+        staff_id: selectedStaff.id,
+        amount: Number(formData.get("amount")),
+        payment_date: formData.get("paymentDate") as string,
+        status: paymentStatus,
+      }]);
 
-    setStaff(staff.map(s => 
-      s.id === selectedStaff.id 
-        ? { ...s, totalPaid: s.totalPaid + amount }
-        : s
-    ));
-
-    setIsPaymentDialogOpen(false);
-    setSelectedStaff(null);
-    toast.success("Payment recorded successfully!");
-    e.currentTarget.reset();
+    if (error) {
+      toast.error("Failed to record payment");
+      console.error(error);
+    } else {
+      toast.success("Payment recorded successfully!");
+      setIsPaymentDialogOpen(false);
+      setSelectedStaff(null);
+      setPaymentStatus("paid");
+      e.currentTarget.reset();
+      fetchPayments();
+    }
   };
 
-  const handleDelete = (id: number) => {
-    setStaff(staff.filter(item => item.id !== id));
-    toast.success("Staff member removed successfully!");
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase
+      .from("staff")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      toast.error("Failed to remove staff member");
+      console.error(error);
+    } else {
+      toast.success("Staff member removed successfully!");
+      fetchStaff();
+    }
   };
 
-  const totalPending = staff.reduce((sum, s) => sum + s.pending, 0);
+  const totalPending = staff.reduce((sum, s) => sum + getPending(s.id), 0);
 
   return (
     <div className="p-6 space-y-6">
@@ -104,6 +182,10 @@ const Staff = () => {
                 <Label htmlFor="phone">Phone Number</Label>
                 <Input id="phone" name="phone" type="tel" placeholder="9876543210" required />
               </div>
+              <div className="space-y-2">
+                <Label htmlFor="email">Email (optional)</Label>
+                <Input id="email" name="email" type="email" placeholder="email@example.com" />
+              </div>
               <Button type="submit" className="w-full">Add Staff Member</Button>
             </form>
           </DialogContent>
@@ -126,7 +208,9 @@ const Staff = () => {
             <CardTitle className="text-sm font-medium">Total Paid</CardTitle>
           </CardHeader>
           <CardContent>
-            <div className="text-2xl font-bold">₹{staff.reduce((sum, s) => sum + s.totalPaid, 0).toLocaleString()}</div>
+            <div className="text-2xl font-bold">
+              ₹{staff.reduce((sum, s) => sum + getTotalPaid(s.id), 0).toLocaleString()}
+            </div>
             <p className="text-xs text-muted-foreground">All time payments</p>
           </CardContent>
         </Card>
@@ -138,7 +222,7 @@ const Staff = () => {
           <CardContent>
             <div className="text-2xl font-bold text-warning">₹{totalPending.toLocaleString()}</div>
             <p className="text-xs text-muted-foreground">
-              {staff.filter(s => s.pending > 0).length} staff member(s)
+              {staff.filter(s => getPending(s.id) > 0).length} staff member(s)
             </p>
           </CardContent>
         </Card>
@@ -172,47 +256,54 @@ const Staff = () => {
               </TableRow>
             </TableHeader>
             <TableBody>
-              {filteredData.map((member) => (
-                <TableRow key={member.id}>
-                  <TableCell className="font-medium">{member.name}</TableCell>
-                  <TableCell>
-                    <Badge variant="secondary">{member.role}</Badge>
-                  </TableCell>
-                  <TableCell>{member.phone}</TableCell>
-                  <TableCell className="text-right">₹{member.totalPaid.toLocaleString()}</TableCell>
-                  <TableCell className="text-right">
-                    {member.pending > 0 ? (
-                      <span className="text-warning font-semibold">₹{member.pending.toLocaleString()}</span>
-                    ) : (
-                      <span className="text-muted-foreground">-</span>
-                    )}
-                  </TableCell>
-                  <TableCell className="text-right">
-                    <div className="flex justify-end gap-2">
-                      <Button 
-                        variant="outline" 
-                        size="icon"
-                        onClick={() => {
-                          setSelectedStaff(member);
-                          setIsPaymentDialogOpen(true);
-                        }}
-                      >
-                        <DollarSign className="h-4 w-4" />
-                      </Button>
-                      <Button variant="ghost" size="icon">
-                        <Pencil className="h-4 w-4" />
-                      </Button>
-                      <Button 
-                        variant="ghost" 
-                        size="icon"
-                        onClick={() => handleDelete(member.id)}
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
-                    </div>
-                  </TableCell>
+              {loading ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center">Loading...</TableCell>
                 </TableRow>
-              ))}
+              ) : filteredData.length === 0 ? (
+                <TableRow>
+                  <TableCell colSpan={6} className="text-center">No staff members found</TableCell>
+                </TableRow>
+              ) : (
+                filteredData.map((member) => (
+                  <TableRow key={member.id}>
+                    <TableCell className="font-medium">{member.full_name}</TableCell>
+                    <TableCell>
+                      <Badge variant="secondary">{member.role}</Badge>
+                    </TableCell>
+                    <TableCell>{member.contact_phone}</TableCell>
+                    <TableCell className="text-right">₹{getTotalPaid(member.id).toLocaleString()}</TableCell>
+                    <TableCell className="text-right">
+                      {getPending(member.id) > 0 ? (
+                        <span className="text-warning font-semibold">₹{getPending(member.id).toLocaleString()}</span>
+                      ) : (
+                        <span className="text-muted-foreground">-</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="text-right">
+                      <div className="flex justify-end gap-2">
+                        <Button 
+                          variant="outline" 
+                          size="icon"
+                          onClick={() => {
+                            setSelectedStaff(member);
+                            setIsPaymentDialogOpen(true);
+                          }}
+                        >
+                          <DollarSign className="h-4 w-4" />
+                        </Button>
+                        <Button 
+                          variant="ghost" 
+                          size="icon"
+                          onClick={() => handleDelete(member.id)}
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      </div>
+                    </TableCell>
+                  </TableRow>
+                ))
+              )}
             </TableBody>
           </Table>
         </CardContent>
@@ -228,7 +319,7 @@ const Staff = () => {
               <div className="space-y-2">
                 <Label>Staff Member</Label>
                 <div className="p-3 bg-accent rounded-lg">
-                  <p className="font-medium">{selectedStaff.name}</p>
+                  <p className="font-medium">{selectedStaff.full_name}</p>
                   <p className="text-sm text-muted-foreground">{selectedStaff.role}</p>
                 </div>
               </div>
@@ -239,6 +330,18 @@ const Staff = () => {
               <div className="space-y-2">
                 <Label htmlFor="paymentDate">Payment Date</Label>
                 <Input id="paymentDate" name="paymentDate" type="date" required />
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="status">Status</Label>
+                <Select value={paymentStatus} onValueChange={setPaymentStatus}>
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value="paid">Paid</SelectItem>
+                    <SelectItem value="pending">Pending</SelectItem>
+                  </SelectContent>
+                </Select>
               </div>
               <Button type="submit" className="w-full">Record Payment</Button>
             </form>

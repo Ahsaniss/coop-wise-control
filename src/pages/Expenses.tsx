@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
@@ -6,55 +6,91 @@ import { Label } from "@/components/ui/label";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from "@/components/ui/dialog";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Plus, Search, Download, Pencil, Trash2 } from "lucide-react";
+import { Plus, Search, Download, Trash2 } from "lucide-react";
 import { toast } from "sonner";
+import { supabase } from "@/integrations/supabase/client";
+import { useAuth } from "@/hooks/useAuth";
 
 const expenseTypes = ["Medicine", "Equipment", "Utilities", "Maintenance", "Transport", "Other"];
 
-const mockExpenseData = [
-  { id: 1, type: "Medicine", name: "Vaccines - Round 1", amount: 15000, date: "2024-01-10" },
-  { id: 2, type: "Utilities", name: "Electricity Bill", amount: 8500, date: "2024-01-15" },
-  { id: 3, type: "Equipment", name: "Water Feeders (x10)", amount: 12000, date: "2024-01-22" },
-  { id: 4, type: "Maintenance", name: "Shed Repair - Roof", amount: 25000, date: "2024-02-05" },
-  { id: 5, type: "Transport", name: "Feed Delivery Charges", amount: 3500, date: "2024-02-10" },
-];
-
 const Expenses = () => {
-  const [expenses, setExpenses] = useState(mockExpenseData);
+  const { user } = useAuth();
+  const [expenses, setExpenses] = useState<any[]>([]);
   const [searchTerm, setSearchTerm] = useState("");
   const [filterType, setFilterType] = useState("all");
   const [isDialogOpen, setIsDialogOpen] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [selectedType, setSelectedType] = useState("");
+
+  useEffect(() => {
+    fetchExpenses();
+  }, [user]);
+
+  const fetchExpenses = async () => {
+    if (!user) return;
+    
+    const { data, error } = await supabase
+      .from("expenses")
+      .select("*")
+      .order("expense_date", { ascending: false });
+
+    if (error) {
+      toast.error("Failed to load expenses");
+      console.error(error);
+    } else {
+      setExpenses(data || []);
+    }
+    setLoading(false);
+  };
 
   const filteredData = expenses.filter(item => {
-    const matchesSearch = item.name.toLowerCase().includes(searchTerm.toLowerCase()) ||
-                         item.type.toLowerCase().includes(searchTerm.toLowerCase());
-    const matchesType = filterType === "all" || item.type === filterType;
+    const matchesSearch = item.expense_type.toLowerCase().includes(searchTerm.toLowerCase()) ||
+                         (item.notes && item.notes.toLowerCase().includes(searchTerm.toLowerCase()));
+    const matchesType = filterType === "all" || item.expense_type === filterType;
     return matchesSearch && matchesType;
   });
 
-  const totalExpenses = filteredData.reduce((sum, item) => sum + item.amount, 0);
+  const totalExpenses = filteredData.reduce((sum, item) => sum + parseFloat(item.amount), 0);
 
-  const handleAddExpense = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleAddExpense = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
     const formData = new FormData(e.currentTarget);
     
-    const newExpense = {
-      id: expenses.length + 1,
-      type: formData.get("type") as string,
-      name: formData.get("name") as string,
-      amount: Number(formData.get("amount")),
-      date: formData.get("date") as string,
-    };
+    const { error } = await supabase
+      .from("expenses")
+      .insert([{
+        user_id: user?.id,
+        expense_type: selectedType,
+        amount: Number(formData.get("amount")),
+        expense_date: formData.get("date") as string,
+        notes: formData.get("notes") as string || null,
+      }]);
 
-    setExpenses([...expenses, newExpense]);
-    setIsDialogOpen(false);
-    toast.success("Expense added successfully!");
-    e.currentTarget.reset();
+    if (error) {
+      toast.error("Failed to add expense");
+      console.error(error);
+    } else {
+      toast.success("Expense added successfully!");
+      setIsDialogOpen(false);
+      setSelectedType("");
+      e.currentTarget.reset();
+      fetchExpenses();
+    }
   };
 
-  const handleDelete = (id: number) => {
-    setExpenses(expenses.filter(item => item.id !== id));
-    toast.success("Expense deleted successfully!");
+  const handleDelete = async (id: string) => {
+    const { error } = await supabase
+      .from("expenses")
+      .delete()
+      .eq("id", id);
+
+    if (error) {
+      toast.error("Failed to delete expense");
+      console.error(error);
+    } else {
+      toast.success("Expense deleted successfully!");
+      fetchExpenses();
+    }
   };
 
   const handleExport = () => {
@@ -82,7 +118,7 @@ const Expenses = () => {
             <form onSubmit={handleAddExpense} className="space-y-4">
               <div className="space-y-2">
                 <Label htmlFor="type">Expense Type</Label>
-                <Select name="type" required>
+                <Select value={selectedType} onValueChange={setSelectedType} required>
                   <SelectTrigger>
                     <SelectValue placeholder="Select type" />
                   </SelectTrigger>
@@ -94,8 +130,8 @@ const Expenses = () => {
                 </Select>
               </div>
               <div className="space-y-2">
-                <Label htmlFor="name">Expense Description</Label>
-                <Input id="name" name="name" placeholder="e.g., Medicine for infection" required />
+                <Label htmlFor="notes">Expense Description</Label>
+                <Input id="notes" name="notes" placeholder="e.g., Medicine for infection" />
               </div>
               <div className="space-y-2">
                 <Label htmlFor="amount">Amount (₹)</Label>
@@ -105,7 +141,7 @@ const Expenses = () => {
                 <Label htmlFor="date">Date</Label>
                 <Input id="date" name="date" type="date" required />
               </div>
-              <Button type="submit" className="w-full">Add Expense</Button>
+              <Button type="submit" className="w-full" disabled={!selectedType}>Add Expense</Button>
             </form>
           </DialogContent>
         </Dialog>
@@ -152,21 +188,26 @@ const Expenses = () => {
                 </TableRow>
               </TableHeader>
               <TableBody>
-                {filteredData.map((item) => (
-                  <TableRow key={item.id}>
-                    <TableCell>
-                      <span className="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
-                        {item.type}
-                      </span>
-                    </TableCell>
-                    <TableCell className="font-medium">{item.name}</TableCell>
-                    <TableCell>{new Date(item.date).toLocaleDateString()}</TableCell>
-                    <TableCell className="text-right font-semibold">₹{item.amount.toLocaleString()}</TableCell>
-                    <TableCell className="text-right">
-                      <div className="flex justify-end gap-2">
-                        <Button variant="ghost" size="icon">
-                          <Pencil className="h-4 w-4" />
-                        </Button>
+                {loading ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center">Loading...</TableCell>
+                  </TableRow>
+                ) : filteredData.length === 0 ? (
+                  <TableRow>
+                    <TableCell colSpan={5} className="text-center">No expenses found</TableCell>
+                  </TableRow>
+                ) : (
+                  filteredData.map((item) => (
+                    <TableRow key={item.id}>
+                      <TableCell>
+                        <span className="inline-flex items-center rounded-full bg-accent px-2.5 py-0.5 text-xs font-medium text-accent-foreground">
+                          {item.expense_type}
+                        </span>
+                      </TableCell>
+                      <TableCell className="font-medium">{item.notes || '-'}</TableCell>
+                      <TableCell>{new Date(item.expense_date).toLocaleDateString()}</TableCell>
+                      <TableCell className="text-right font-semibold">₹{parseFloat(item.amount).toLocaleString()}</TableCell>
+                      <TableCell className="text-right">
                         <Button 
                           variant="ghost" 
                           size="icon"
@@ -174,10 +215,10 @@ const Expenses = () => {
                         >
                           <Trash2 className="h-4 w-4" />
                         </Button>
-                      </div>
-                    </TableCell>
-                  </TableRow>
-                ))}
+                      </TableCell>
+                    </TableRow>
+                  ))
+                )}
               </TableBody>
             </Table>
           </CardContent>

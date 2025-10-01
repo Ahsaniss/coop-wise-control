@@ -1,21 +1,22 @@
-import { LayoutDashboard, Wheat, DollarSign, Users, FileText } from "lucide-react";
+import { LayoutDashboard, Wheat, DollarSign, Users, FileText, LogOut } from "lucide-react";
 import { NavLink, useLocation } from "react-router-dom";
+import { useAuth } from "@/hooks/useAuth";
 import {
   Sidebar,
   SidebarContent,
+  SidebarFooter,
   SidebarGroup,
   SidebarGroupContent,
   SidebarGroupLabel,
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
-  SidebarTrigger,
   useSidebar,
   SidebarHeader,
 } from "@/components/ui/sidebar";
 
 const items = [
-  { title: "Dashboard", url: "/", icon: LayoutDashboard },
+  { title: "Dashboard", url: "/dashboard", icon: LayoutDashboard },
   { title: "Feed Management", url: "/feed", icon: Wheat },
   { title: "Expenses", url: "/expenses", icon: DollarSign },
   { title: "Staff", url: "/staff", icon: Users },
@@ -25,6 +26,7 @@ const items = [
 export function AppSidebar() {
   const { open } = useSidebar();
   const location = useLocation();
+  const { signOut } = useAuth();
 
   const isActive = (path: string) => location.pathname === path;
 
@@ -63,6 +65,17 @@ export function AppSidebar() {
           </SidebarGroupContent>
         </SidebarGroup>
       </SidebarContent>
+      
+      <SidebarFooter>
+        <SidebarMenu>
+          <SidebarMenuItem>
+            <SidebarMenuButton onClick={signOut} className="text-destructive hover:text-destructive">
+              <LogOut className="h-4 w-4" />
+              <span>Sign Out</span>
+            </SidebarMenuButton>
+          </SidebarMenuItem>
+        </SidebarMenu>
+      </SidebarFooter>
     </Sidebar>
   );
 }
